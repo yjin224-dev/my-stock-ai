@@ -3,60 +3,59 @@ import FinanceDataReader as fdr
 from pykrx import stock
 import datetime
 import pandas as pd
+import requests
+
+# 텔레그램 알림 함수
+def send_telegram_msg(text):
+    try:
+        token = st.secrets["TELEGRAM_TOKEN"]
+        chat_id = st.secrets["TELEGRAM_CHAT_ID"]
+        url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={text}"
+        requests.get(url)
+    except:
+        pass
 
 st.set_page_config(page_title="제영진의 투자 비서", layout="wide")
-st.title("📈 제영진님의 저평가 우량주 스캐너")
+st.title("🚀 제영진의 상승 모멘텀 스캐너")
 
-# 📅 날짜 설정 로직 업데이트 (주말/공휴일 대응)
+# 날짜 설정
 now = datetime.datetime.now()
-# 만약 오늘이 토요일(5)이나 일요일(6)이면 지난 금요일로 날짜 변경
-if now.weekday() == 5: # 토요일
-	now = now - datetime.timedelta(days=1)
-elif now.weekday() == 6: # 일요일
-	now = now - datetime.timedelta(days=2)
-# 만약 아침 9시 전이라면 어제 날짜로 설정 (장이 열리기 전이므로)
-elif now.hour < 9:
-	now = now - datetime.timedelta(days=1)
-
+if now.weekday() >= 5: # 주말이면 금요일로
+    now = now - datetime.timedelta(days=(now.weekday()-4))
 target_date = now.strftime("%Y%m%d")
-st.info(f"📅 분석 기준일: {now.strftime('%Y-%m-%d')} (주말/공휴일에는 가장 최근 영업일 데이터를 가져옵니다.)")
 
-st.sidebar.header("🔍 필터 조건 설정")
-max_price = st.sidebar.number_input("최대 주가 (원)", value=10000)
-max_pbr = st.sidebar.slider("최대 PBR", 0.0, 2.0, 1.0) # PBR을 조금 높여서 1.0으로 기본값 변경
+st.sidebar.header("🔍 필터 조건")
+max_price = st.sidebar.number_input("최대 주가", value=10000)
+max_pbr = st.sidebar.slider("최대 PBR", 0.0, 1.5, 0.8)
 
-if st.button('🚀 실시간 종목 분석 시작'):
-	with st.spinner('데이터를 분석 중입니다...'):
-		try:
-			# 1. 전 종목 기본 지표 가져오기
-			df_fund = stock.get_market_fundamental(target_date, market="ALL")
-			# 2. 전 종목 시세 가져오기
-			df_price = stock.get_market_ohlcv(target_date, market="ALL")
+if st.button('📈 상승 모멘텀 분석 시작'):
+    with st.spinner('차트 분석 중...'):
+        # 1. 기본 저평가 종목 추출
+        df_fund = stock.get_market_fundamental(target_date, market="ALL")
+        df_price = stock.get_market_ohlcv(target_date, market="ALL")
+        result = pd.concat([df_price['종가'], df_fund['PBR'], df_fund['EPS']], axis=1)
+        
+        # 필터링
+        cond = (result['종가'] <= max_price) & (result['PBR'] > 0) & (result['PBR'] <= max_pbr) & (result['EPS'] > 0)
+        candidates = result[cond].index.tolist()
+        
+        hit_list = []
+        for ticker in candidates[:30]: # 상위 30개만 정밀 분석
+            name = stock.get_market_ticker_name(ticker)
+            # 최근 20일 시세 가져오기
+            df = fdr.DataReader(ticker, (now - datetime.timedelta(days=40)).strftime('%Y-%m-%d'))
             
-			# 데이터 합치기
-			result = pd.concat([df_price['종가'], df_fund], axis=1)
-			result = result.reset_index()
-			result.columns = ['티커', '현재가', 'BPS', 'PER', 'PBR', 'EPS', 'DIV', 'DPS']
-            
-			# 종목명 추가
-			result['종목명'] = result['티커'].apply(lambda x: stock.get_market_ticker_name(x))
-
-			# 🛠️ 영진님의 필터링 조건 적용
-			# PBR은 0보다 커야 함 (자산 데이터가 있는 것만)
-			filtered = result[
-				(result['현재가'] <= max_price) & 
-				(result['PBR'] > 0) & 
-				(result['PBR'] <= max_pbr) &
-				(result['EPS'] > 0) # EPS > 0 이면 흑자 기업입니다!
-			]
-
-			if not filtered.empty:
-				st.success(f"조건에 맞는 종목 {len(filtered)}개를 찾았습니다!")
-				# 보기 좋게 정리해서 보여주기
-				final_df = filtered[['종목명', '현재가', 'PBR', 'PER']].sort_values(by='PBR')
-				st.dataframe(final_df, use_container_width=True)
-			else:
-				st.warning(f"{target_date} 기준, 조건에 맞는 종목이 없습니다. 사이드바에서 PBR을 조금 높여보세요.")
+            if len(df) > 20:
+                ma5 = df['Close'].rolling(5).mean()
+                ma20 = df['Close'].rolling(20).mean()
                 
-		except Exception as e:
-			st.error(f"오류가 발생했습니다: {e}")
+                # 📈 골든크로스 포착 (5일선이 20일선을 돌파)
+                if ma5.iloc[-1] > ma20.iloc[-1] and ma5.iloc[-2] <= ma20.iloc[-2]:
+                    hit_list.append(name)
+                    # 🔔 즉시 알림 발송!
+                    send_telegram_msg(f"📢 [모멘텀 포착] {name}\n현재가: {df['Close'].iloc[-1]:,}원\n골든크로스 발생! 확인해보세요.")
+
+        if hit_list:
+            st.success(f"오늘의 상승 예견 종목: {', '.join(hit_list)}")
+        else:
+            st.warning("현재 모멘텀이 포착된 저평가 종목이 없습니다.")

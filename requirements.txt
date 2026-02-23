@@ -1,3 +1,6 @@
 streamlit
 finance-datareader
 pykrx
+pandas
+streamlit-autorefresh
+OpenDartReader

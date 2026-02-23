@@ -12,56 +12,63 @@ def send_telegram_msg(text):
     url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={text}"
     requests.get(url)
 
-# 💡 이름표를 무조건 영어 표준으로 통일해주는 함수
-def fix_columns(df):
+# 💡 이름표가 한글이든 영어든 무조건 'Close', 'Volume'으로 바꿔주는 마법의 함수
+def force_standard_columns(df):
     if df is None or df.empty: return df
-    # 한글과 영어 이름을 모두 대응시켜서 표준화합니다.
+    # 모든 가능성 있는 이름들을 표준 영어 이름으로 매핑합니다.
     mapping = {
-        '시가': 'Open', '고가': 'High', '저가': 'Low', '종가': 'Close', '거래량': 'Volume',
-        'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'
+        '종가': 'Close', 'close': 'Close', 'Close': 'Close',
+        '거래량': 'Volume', 'volume': 'Volume', 'Volume': 'Volume',
+        '시가': 'Open', 'open': 'Open', 'Open': 'Open',
+        '고가': 'High', 'high': 'High', 'High': 'High',
+        '저가': 'Low', 'low': 'Low', 'Low': 'Low'
     }
-    df.rename(columns=mapping, inplace=True)
+    # 데이터프레임의 컬럼명을 순회하며 매핑된 이름이 있으면 변경합니다.
+    new_cols = {col: mapping[col] for col in df.columns if col in mapping}
+    df.rename(columns=new_cols, inplace=True)
     return df
 
-def check_signals():
+def check_market():
     try:
         now = datetime.datetime.now()
         target_date = now.strftime("%Y%m%d")
-        
-        # 1. 시장 전체 데이터 가져오기 (pykrx 사용)
+        print(f"[{now}] 분석을 시작합니다...")
+
+        # 1. 시장 전체 데이터 가져오기 (보통 한글 '종가' 등으로 옴)
         df_market = stock.get_market_ohlcv(target_date, market="ALL")
-        df_market = fix_columns(df_market) # 즉시 영어로 통일
+        df_market = force_standard_columns(df_market)
         
-        # 거래대금 상위 100개 분석
+        # 거래대금 상위 100개 추출
         df_top = df_market.sort_values(by='거래대금', ascending=False).head(100)
         
+        found_count = 0
         for ticker in df_top.index:
             name = stock.get_market_ticker_name(ticker)
-            # fdr로 상세 데이터 가져오기
+            # 2. 개별 종목 상세 데이터 (보통 영어 'Close' 등으로 옴)
             df = fdr.DataReader(ticker, (now - datetime.timedelta(days=60)).strftime('%Y-%m-%d'))
-            df = fix_columns(df) # 즉시 영어로 통일
+            df = force_standard_columns(df)
             
-            if df is not None and len(df) > 30:
-                # 2. 이평선 밀집도 계산 (이제 안전하게 'Close'만 사용)
+            if df is not None and len(df) > 30 and 'Close' in df.columns:
+                # 📈 이평선 밀집도 계산 (3% 이내)
                 ma5 = df['Close'].rolling(5).mean().iloc[-1]
                 ma20 = df['Close'].rolling(20).mean().iloc[-1]
                 ma60 = df['Close'].rolling(60).mean().iloc[-1]
                 
-                ma_max = max(ma5, ma20, ma60)
-                ma_min = min(ma5, ma20, ma60)
-                ma_diff = (ma_max - ma_min) / ma_min
+                ma_diff = (max(ma5, ma20, ma60) - min(ma5, ma20, ma60)) / min(ma5, ma20, ma60)
                 
-                # 3. 거래량 가뭄 확인
+                # 📉 거래량 가뭄 확인 (최근 3일 평균이 20일 평균의 60% 이하)
                 vol_avg = df['Volume'].iloc[-20:].mean()
                 vol_recent = df['Volume'].iloc[-3:].mean()
                 
-                # 🎯 폭발전야 조건: 이평선 밀집(3%이내) + 거래량 급감(평균의 60%이하)
                 if ma_diff < 0.03 and vol_recent < vol_avg * 0.6:
-                    msg = f"💎 [폭발전야 포착] {name}\n🎯 밀집도: {ma_diff*100:.1f}%\n📉 거래량: 가뭄상태 (매집의심)"
+                    msg = f"💎 [폭발전야 포착] {name}\n🎯 밀집도: {ma_diff*100:.1f}%\n📉 거래량: 가뭄상태 (매집 의심)"
                     send_telegram_msg(msg)
-                    
+                    found_count += 1
+        
+        print(f"분석 완료! 포착된 종목 수: {found_count}")
+        
     except Exception as e:
-        print(f"오류 상세: {e}")
+        print(f"❌ 오류 발생 상세: {e}")
 
 if __name__ == "__main__":
-    check_signals()
+    check_market()

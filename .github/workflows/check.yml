@@ -1,11 +1,11 @@
-name: Stock Monitor Case
+name: Stock Monitor Action
 on:
   schedule:
     - cron: '*/10 * * * *' # 10분마다 실행
-  workflow_dispatch: # 수동 실행 버튼
+  workflow_dispatch: # 직접 실행 버튼 활성화
 
 jobs:
-  build:
+  run_monitor:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -16,7 +16,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install OpenDartReader pandas requests
-      - name: Run monitor
+      - name: Run logic
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           DART_API_KEY: ${{ secrets.DART_API_KEY }}

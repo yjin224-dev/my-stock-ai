@@ -3,10 +3,11 @@ import datetime
 import requests
 import os
 
-# 텔레그램 알림 함수 (영진님 고유 ID: 8403847596 적용)
+# 텔레그램 알림 함수 (영진님 고유 ID 적용)
 def send_telegram_msg(text):
-    token = os.environ["TELEGRAM_TOKEN"]
-    chat_id = "8403847596"
+    # 깃허브 Secrets에서 토큰을 가져옵니다
+    token = os.environ.get("TELEGRAM_TOKEN")
+    chat_id = "8403847596" # 영진님의 고유 ID
     url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={text}"
     requests.get(url)
 
@@ -15,8 +16,8 @@ positive_keywords = ["공급계약", "수주", "제3자배정", "자기주식취
 
 def check_disclosures():
     try:
-        # DART API 키 연결
-        dart = OpenDartReader(os.environ["DART_API_KEY"])
+        # 깃허브 Secrets에서 DART 키를 가져옵니다
+        dart = OpenDartReader(os.environ.get("DART_API_KEY"))
         today = datetime.datetime.now().strftime('%Y%m%d')
         df = dart.list(end_date=today)
         
@@ -24,7 +25,6 @@ def check_disclosures():
             for _, row in df.iterrows():
                 title = row['report_nm']
                 company = row['corp_nm']
-                # 키워드 검사
                 for key in positive_keywords:
                     if key in title:
                         msg = f"🔔 [24H 자동감시] {company}\n📄 {title}"

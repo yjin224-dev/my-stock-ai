@@ -27,7 +27,7 @@ def standardize_columns(df):
     new_cols = {}
     for col in df.columns:
         for k, v in mapping.items():
-            if k in col: # '종가(원)' 처럼 이름이 길어도 '종가'가 포함되면 매칭
+            if k in col: # 이름에 '종가'나 'CLOSE'가 포함되어 있으면 매칭
                 new_cols[col] = v
                 break
     df.rename(columns=new_cols, inplace=True)
@@ -38,7 +38,7 @@ def check_market():
         now = datetime.datetime.now()
         target_date = now.strftime("%Y%m%d")
         
-        # 1. 최근 영업일 데이터 확보
+        # 1. 최근 영업일 데이터 확보 (오늘 장이 아직 안 열렸거나 휴일이면 이전 날짜로)
         df_market = stock.get_market_ohlcv(target_date, market="ALL")
         if df_market is None or df_market.empty:
             for i in range(1, 10):
@@ -55,17 +55,19 @@ def check_market():
             print("시장 데이터를 가져오지 못했습니다.")
             return
 
-        # 거래대금 상위 100개 추출
+        # 거래대금 상위 100개 추출 (이름표가 AMOUNT로 통일됨)
         df_top = df_market.sort_values(by='AMOUNT', ascending=False).head(100)
         
         found_count = 0
         for ticker in df_top.index:
             try:
                 name = stock.get_market_ticker_name(ticker)
+                # 개별 종목 60일치 데이터 확보
                 df = fdr.DataReader(ticker, (now - datetime.timedelta(days=60)).strftime('%Y-%m-%d'))
                 df = standardize_columns(df)
                 
-                if df is not None and len(df) > 30 and 'CLOSE' in df.columns:
+                # 'CLOSE'와 'VOLUME' 이름표가 있는지 확인 후 분석
+                if df is not None and len(df) > 30 and 'CLOSE' in df.columns and 'VOLUME' in df.columns:
                     # 📈 이평선 밀집도 계산 (5, 20, 60일선이 3% 이내)
                     ma5 = df['CLOSE'].rolling(5).mean().iloc[-1]
                     ma20 = df['CLOSE'].rolling(20).mean().iloc[-1]
@@ -74,7 +76,7 @@ def check_market():
                     ma_max, ma_min = max(ma5, ma20, ma60), min(ma5, ma20, ma60)
                     ma_diff = (ma_max - ma_min) / ma_min
                     
-                    # 📉 거래량 가뭄 확인
+                    # 📉 거래량 가뭄 확인 (최근 3일 평균이 20일 평균의 60% 이하)
                     vol_avg = df['VOLUME'].iloc[-20:].mean()
                     vol_recent = df['VOLUME'].iloc[-3:].mean()
                     
@@ -82,7 +84,9 @@ def check_market():
                         msg = f"💎 [폭발전야 포착] {name}\n🎯 밀집도: {ma_diff*100:.1f}%\n📉 거래량: 가뭄 (매집 의심)"
                         send_telegram_msg(msg)
                         found_count += 1
-            except: continue 
+            except: 
+                # 한 종목에서 에러가 나도 로봇이 멈추지 않고 다음 종목을 계속 분석합니다.
+                continue 
             
         print(f"분석 완료! 포착 종목: {found_count}개")
         

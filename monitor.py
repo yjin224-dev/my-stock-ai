@@ -14,31 +14,12 @@ def send_telegram_msg(text):
         requests.get(url, timeout=10)
     except: pass
 
-# 💡 [무적 로직] 어떤 이름표가 오든 표준 영어 이름으로 강제 변환합니다.
-def standardize_columns(df):
-    if df is None or df.empty: return None
-    # 모든 컬럼명을 대문자로 변환하여 비교를 단순화합니다.
-    df.columns = [str(c).upper() for c in df.columns]
-    mapping = {
-        '종가': 'CLOSE', 'CLOSE': 'CLOSE', '거래량': 'VOLUME', 'VOLUME': 'VOLUME',
-        '시가': 'OPEN', 'OPEN': 'OPEN', '고가': 'HIGH', 'HIGH': 'HIGH',
-        '저가': 'LOW', 'LOW': 'LOW', '거래대금': 'AMOUNT', 'AMOUNT': 'AMOUNT', 'VALUE': 'AMOUNT'
-    }
-    new_cols = {}
-    for col in df.columns:
-        for k, v in mapping.items():
-            if k in col: # 이름에 '종가'나 'CLOSE'가 포함되어 있으면 매칭
-                new_cols[col] = v
-                break
-    df.rename(columns=new_cols, inplace=True)
-    return df
-
 def check_market():
     try:
         now = datetime.datetime.now()
         target_date = now.strftime("%Y%m%d")
         
-        # 1. 최근 영업일 데이터 확보 (오늘 장이 아직 안 열렸거나 휴일이면 이전 날짜로)
+        # 1. 최근 영업일 데이터 확보
         df_market = stock.get_market_ohlcv(target_date, market="ALL")
         if df_market is None or df_market.empty:
             for i in range(1, 10):
@@ -49,49 +30,55 @@ def check_market():
                     break
 
         print(f"[{now}] 분석 기준일: {target_date}")
-        df_market = standardize_columns(df_market)
         
-        if df_market is None or 'AMOUNT' not in df_market.columns:
-            print("시장 데이터를 가져오지 못했습니다.")
-            return
-
-        # 거래대금 상위 100개 추출 (이름표가 AMOUNT로 통일됨)
-        df_top = df_market.sort_values(by='AMOUNT', ascending=False).head(100)
+        # 💡 [지능형 로직] 이름표가 무엇이든 '거래대금'을 의미하는 단어가 포함된 칸을 찾습니다.
+        money_cols = [c for c in df_market.columns if any(x in str(c) for x in ['거래대금', 'Amount', 'Value', 'Value_Sum'])]
+        sort_col = money_cols[0] if money_cols else df_market.columns[min(5, len(df_market.columns)-1)]
+        
+        df_top = df_market.sort_values(by=sort_col, ascending=False).head(100)
         
         found_count = 0
         for ticker in df_top.index:
             try:
                 name = stock.get_market_ticker_name(ticker)
-                # 개별 종목 60일치 데이터 확보
                 df = fdr.DataReader(ticker, (now - datetime.timedelta(days=60)).strftime('%Y-%m-%d'))
-                df = standardize_columns(df)
                 
-                # 'CLOSE'와 'VOLUME' 이름표가 있는지 확인 후 분석
-                if df is not None and len(df) > 30 and 'CLOSE' in df.columns and 'VOLUME' in df.columns:
-                    # 📈 이평선 밀집도 계산 (5, 20, 60일선이 3% 이내)
-                    ma5 = df['CLOSE'].rolling(5).mean().iloc[-1]
-                    ma20 = df['CLOSE'].rolling(20).mean().iloc[-1]
-                    ma60 = df['CLOSE'].rolling(60).mean().iloc[-1]
+                if df is not None and len(df) > 30:
+                    # 💡 [지능형 로직] 이름표 대신 데이터의 의미를 파악합니다.
+                    # '종가' 후보들: Close, 종가, close
+                    c_cols = [c for c in df.columns if any(x in str(c).lower() for x in ['close', '종가'])]
+                    # '거래량' 후보들: Volume, 거래량, volume
+                    v_cols = [c for c in df.columns if any(x in str(c).lower() for x in ['volume', '거래량'])]
                     
-                    ma_max, ma_min = max(ma5, ma20, ma60), min(ma5, ma20, ma60)
-                    ma_diff = (ma_max - ma_min) / ma_min
+                    if not c_cols or not v_cols: 
+                        # 이름표를 못 찾으면 칸 번호(index)로 강제 지정
+                        c_col, v_col = df.columns[3], df.columns[4]
+                    else:
+                        c_col, v_col = c_cols[0], v_cols[0]
+
+                    # 📈 이동평균선 계산
+                    ma5 = df[c_col].rolling(5).mean().iloc[-1]
+                    ma20 = df[c_col].rolling(20).mean().iloc[-1]
+                    ma60 = df[c_col].rolling(60).mean().iloc[-1]
                     
-                    # 📉 거래량 가뭄 확인 (최근 3일 평균이 20일 평균의 60% 이하)
-                    vol_avg = df['VOLUME'].iloc[-20:].mean()
-                    vol_recent = df['VOLUME'].iloc[-3:].mean()
+                    ma_diff = (max(ma5, ma20, ma60) - min(ma5, ma20, ma60)) / min(ma5, ma20, ma60)
                     
+                    # 📉 거래량 가뭄 확인
+                    vol_avg = df[v_col].rolling(20).mean().iloc[-1]
+                    vol_recent = df[v_col].iloc[-3:].mean()
+                    
+                    # 🎯 폭발전야 조건: 이평선 밀집(3% 이내) + 거래량 바닥(평균의 60% 이하)
                     if ma_diff < 0.03 and vol_recent < vol_avg * 0.6:
                         msg = f"💎 [폭발전야 포착] {name}\n🎯 밀집도: {ma_diff*100:.1f}%\n📉 거래량: 가뭄 (매집 의심)"
                         send_telegram_msg(msg)
                         found_count += 1
-            except: 
-                # 한 종목에서 에러가 나도 로봇이 멈추지 않고 다음 종목을 계속 분석합니다.
-                continue 
+            except: continue # 한 종목이 에러나도 로봇은 멈추지 않습니다.
             
         print(f"분석 완료! 포착 종목: {found_count}개")
         
     except Exception as e:
-        print(f"❌ 최종 에러 상세 정보: {e}")
+        print(f"❌ 최종 에러 확인: {e}")
 
 if __name__ == "__main__":
     check_market()
+    

@@ -2,7 +2,7 @@ name: Stock Monitor Action
 on:
   schedule:
     - cron: '*/10 * * * *' # 10분마다 실행
-  workflow_dispatch: # 직접 실행 버튼
+  workflow_dispatch:
 
 jobs:
   run_monitor:
@@ -15,10 +15,10 @@ jobs:
           python-version: '3.9'
       - name: Install dependencies
         run: |
-          pip install OpenDartReader pandas requests
+          # 🔍 여기에 필요한 도구들을 모두 적어줘야 로봇이 챙겨갑니다!
+          pip install OpenDartReader pandas requests pykrx finance-datareader
       - name: Run logic
         env:
-          # 깃허브 Secrets에 저장된 키를 연결합니다
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
-        run: python monitor.py # 파일 이름이 monitor.py여야 합니다!
+        run: python monitor.py

@@ -1,4 +1,9 @@
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
+
+# 5분(300,000밀리초)마다 자동으로 앱을 새로고침합니다.
+count = st_autorefresh(interval=5 * 60 * 1000, key="fscounter")
+import streamlit as st
 import FinanceDataReader as fdr
 from pykrx import stock
 import datetime
@@ -59,3 +64,4 @@ if st.button('📈 상승 모멘텀 분석 시작'):
             st.success(f"오늘의 상승 예견 종목: {', '.join(hit_list)}")
         else:
             st.warning("현재 모멘텀이 포착된 저평가 종목이 없습니다.")
+

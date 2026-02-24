@@ -30,9 +30,10 @@ def check_market_blind():
                     break
         
         print(f"[{now}] 분석 시작 (기준일: {target_date})")
+        # 진단용: 실제로 어떤 이름표가 들어오는지 로그에 찍어둡니다.
+        print(f"현재 데이터 이름표 리스트: {df_market.columns.tolist()}")
 
-        # 💡 [무적 로직] 이름표 대신 '칸 번호'로만 정렬
-        # 보통 6번째 칸(Index 5)이 거래대금입니다.
+        # 💡 [무적 로직] 이름표 대신 '칸 번호'로만 정렬 (6번째 칸 = 거래대금)
         df_top = df_market.sort_values(by=df_market.columns[5], ascending=False).head(200)
         
         found_count = 0
@@ -43,17 +44,18 @@ def check_market_blind():
                 df = fdr.DataReader(ticker, (now - datetime.timedelta(days=100)).strftime('%Y-%m-%d'))
                 
                 if df is not None and len(df) > 30:
-                    # 💡 [핵심] 글자 이름표를 완전히 빼버리고 숫자 위치로만 데이터 추출
+                    # 💡 [핵심] 글자 이름표를 완전히 빼버리고 숫자 위치(iloc)로만 데이터 추출
                     # 4번째 칸(Index 3) = 종가, 5번째 칸(Index 4) = 거래량
                     close_data = df.iloc[:, 3] 
                     vol_data = df.iloc[:, 4]   
                     
-                    # 📈 이동평균선 계산
+                    # 📈 이동평균선(MA) 계산
                     ma5 = close_data.rolling(5).mean().iloc[-1]
                     ma20 = close_data.rolling(20).mean().iloc[-1]
                     ma60 = close_data.rolling(60).mean().iloc[-1]
                     
-                    # 밀집도 계산: $$ma\_diff = \frac{\max(ma5, ma20, ma60) - \min(ma5, ma20, ma60)}{\min(ma5, ma20, ma60)}$$
+                    # 이평선 밀집도 계산 수식
+                    # $$ma\_diff = \frac{\max(ma5, ma20, ma60) - \min(ma5, ma20, ma60)}{\min(ma5, ma20, ma60)}$$
                     ma_diff = (max(ma5, ma20, ma60) - min(ma5, ma20, ma60)) / min(ma5, ma20, ma60)
                     
                     # 📉 거래량 확인 (최근 3일 평균이 20일 평균의 70% 이하)
@@ -61,7 +63,7 @@ def check_market_blind():
                     vol_recent = vol_data.iloc[-3:].mean()
                     
                     if ma_diff < 0.04 and vol_recent < vol_avg * 0.7:
-                        # 6번째 칸(거래대금) 데이터를 가져와 억 단위로 표시
+                        # 거래대금(6번째 칸) 데이터를 가져와 억 단위로 표시
                         amount_bill = round(df_top.loc[ticker, df_market.columns[5]] / 100_000_000)
                         msg = f"💎 [포착] {name}\n💰 거래대금: {amount_bill}억\n📈 밀집도: {ma_diff*100:.1f}%\n📉 상태: 거래량 가뭄"
                         send_telegram_msg(msg)

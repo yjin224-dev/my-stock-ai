@@ -1,6 +1,8 @@
+import OpenDartReader
 import FinanceDataReader as fdr
 from pykrx import stock
 import datetime
+import pandas as pd
 import requests
 import os
 
@@ -8,48 +10,67 @@ def send_telegram_msg(text):
     try:
         token = os.environ.get("TELEGRAM_TOKEN")
         chat_id = "8403847596" # 영진님 고유 ID
-        url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}"
-        requests.post(url, json={'text': text}, timeout=10)
+        url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={text}"
+        requests.get(url, timeout=10)
     except: pass
 
-def run_no_label_logic():
+def check_everything():
     try:
-        # 💡 내가 보낸 코드가 맞는지 확인하는 '진단 도장'
-        print("🚀 [영진님_무적_버전_가동] 이름표를 전혀 쓰지 않는 모드입니다.")
-        
+        dart = OpenDartReader(os.environ.get("DART_API_KEY"))
         now = datetime.datetime.now()
+        
+        # 1. 최근 영업일 데이터 확보 (데이터가 없으면 10일 전까지 뒤짐)
         target_date = now.strftime("%Y%m%d")
-        
-        df_market = stock.get_market_ohlcv(target_date, market="ALL")
+        df_market = None
+        for i in range(0, 10):
+            d = (now - datetime.timedelta(days=i)).strftime("%Y%m%d")
+            try:
+                df_market = stock.get_market_ohlcv(d, market="ALL")
+                if not df_market.empty:
+                    target_date = d
+                    break
+            except: continue
+
         if df_market is None or df_market.empty:
-            df_market = stock.get_market_ohlcv((now - datetime.timedelta(days=1)).strftime("%Y%m%d"), market="ALL")
+            print("데이터를 찾을 수 없습니다.")
+            return
+
+        # 2. 거래대금 상위 200개 추출 (이름표 대신 6번째 칸 위치 사용)
+        # 보통 거래대금은 [시가,고가,저가,종가,거래량,거래대금] 순서의 6번째(index 5)입니다.
+        df_top = df_market.sort_values(by=df_market.columns[min(5, len(df_market.columns)-1)], ascending=False).head(200)
         
-        # 💡 위치(6번째 칸)로 거래대금 상위 200개 추출
-        df_top = df_market.sort_values(by=df_market.columns[5], ascending=False).head(200)
-        
-        found_count = 0
         for ticker in df_top.index:
             try:
                 name = stock.get_market_ticker_name(ticker)
+                # fdr은 영어 이름표(Close, Volume)를 매우 안정적으로 줍니다.
                 df = fdr.DataReader(ticker, (now - datetime.timedelta(days=100)).strftime('%Y-%m-%d'))
                 
-                if df is not None and len(df) > 30:
-                    # 💡 [핵심] iloc를 사용하여 4번째(Index 3), 5번째(Index 4) 데이터만 가져옴
-                    close_p = df.iloc[:, 3] 
-                    vol = df.iloc[:, 4]     
+                if df is not None and len(df) > 60:
+                    # 💡 이름표 대신 '칸 번호'로 데이터 추출 (안전장치)
+                    close = df.iloc[:, 3] # 4번째 칸: 종가
+                    vol = df.iloc[:, 4]   # 5번째 칸: 거래량
                     
-                    ma5, ma20, ma60 = close_p.rolling(5).mean().iloc[-1], close_p.rolling(20).mean().iloc[-1], close_p.rolling(60).mean().iloc[-1]
+                    # 📈 이평선 밀집 (4% 이내)
+                    ma5, ma20, ma60 = close.rolling(5).mean().iloc[-1], close.rolling(20).mean().iloc[-1], close.rolling(60).mean().iloc[-1]
                     ma_diff = (max(ma5, ma20, ma60) - min(ma5, ma20, ma60)) / min(ma5, ma20, ma60)
                     
-                    if ma_diff < 0.04 and vol.iloc[-3:].mean() < vol.rolling(20).mean().iloc[-1] * 0.7:
-                        amount = round(df_top.loc[ticker, df_market.columns[5]] / 100_000_000)
-                        msg = f"💎 [포착] {name}\n💰 거래대금: {amount}억\n📈 밀집도: {ma_diff*100:.1f}%"
+                    # 📉 거래량 바닥 확인
+                    vol_dry = vol.iloc[-3:].mean() < vol.rolling(20).mean().iloc[-1] * 0.6
+                    
+                    if ma_diff < 0.04 and vol_dry:
+                        # 🔍 공시 확인
+                        dis = dart.list(ticker, start=target_date)
+                        msg_dis = "🔔 공시: 없음"
+                        if dis is not None and not dis.empty:
+                            msg_dis = f"⚠️ 공시: {dis.iloc[0]['report_nm']}"
+
+                        amt = round(df_top.loc[ticker, df_top.columns[5]] / 100_000_000)
+                        msg = f"💎 [포착] {name}\n💰 거래대금: {amt}억\n📈 밀집도: {ma_diff*100:.1f}%\n{msg_dis}"
                         send_telegram_msg(msg)
-                        found_count += 1
-            except: continue 
-        print(f"✅ 분석 완료! 포착 종목: {found_count}개")
+            except: continue
+        print("전체 분석 완료!")
     except Exception as e:
-        print(f"🆘 에러 상세: {e}")
+        print(f"최종 에러 상세: {e}")
 
 if __name__ == "__main__":
-    run_no_label_logic()
+    check_everything()

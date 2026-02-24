@@ -14,13 +14,12 @@ def send_telegram_msg(text):
         requests.post(url, json={'text': text}, timeout=10)
     except: pass
 
-def check_market_blind():
+def check_market_no_labels():
     try:
-        dart = OpenDartReader(os.environ.get("DART_API_KEY"))
         now = datetime.datetime.now()
         target_date = now.strftime("%Y%m%d")
         
-        # 1. 시장 전체 데이터 (오늘 데이터 없으면 최근 영업일 자동 보정)
+        # 1. 시장 전체 데이터 확보
         df_market = stock.get_market_ohlcv(target_date, market="ALL")
         if df_market is None or df_market.empty:
             for i in range(1, 10):
@@ -30,19 +29,18 @@ def check_market_blind():
                     target_date = check_date
                     break
         
-        # 💡 [무적 로직 1] 이름표 대신 '칸 번호'로 거래대금 정렬 (Index 5 = 6번째 칸)
+        # 💡 [위치 기반 1] 이름표 대신 6번째 칸(Index 5)인 '거래대금'으로 정렬
         df_top = df_market.sort_values(by=df_market.columns[5], ascending=False).head(200)
         
         found_count = 0
         for ticker in df_top.index:
             try:
                 name = stock.get_market_ticker_name(ticker)
-                # 2. 개별 종목 60일 데이터 확보
+                # 2. 개별 종목 데이터 (최근 100일치)
                 df = fdr.DataReader(ticker, (now - datetime.timedelta(days=100)).strftime('%Y-%m-%d'))
                 
                 if df is not None and len(df) > 30:
-                    # 💡 [무적 로직 2] 이름표 무관! 위치(iloc)로 데이터 강제 추출
-                    # [0:시가, 1:고가, 2:저가, 3:종가, 4:거래량]
+                    # 💡 [위치 기반 2] 이름표 무시! 4번째 칸(Index 3)은 '종가', 5번째 칸(Index 4)은 '거래량'
                     close_data = df.iloc[:, 3] 
                     vol_data = df.iloc[:, 4]   
                     
@@ -51,23 +49,17 @@ def check_market_blind():
                     ma20 = close_data.rolling(20).mean().iloc[-1]
                     ma60 = close_data.rolling(60).mean().iloc[-1]
                     
-                    # 밀집도 계산 수식:
-                    # $$ma\_diff = \frac{\max(ma5, ma20, ma60) - \min(ma5, ma20, ma60)}{\min(ma5, ma20, ma60)}$$
+                    # 밀집도 계산 수식
                     ma_diff = (max(ma5, ma20, ma60) - min(ma5, ma20, ma60)) / min(ma5, ma20, ma60)
                     
-                    # 📉 거래량 확인 (최근 3일 평균 < 20일 평균의 70%)
+                    # 📉 거래량 확인 (최근 3일 평균이 20일 평균의 70% 이하)
                     vol_avg = vol_data.rolling(20).mean().iloc[-1]
                     vol_recent = vol_data.iloc[-3:].mean()
                     
                     if ma_diff < 0.04 and vol_recent < vol_avg * 0.7:
-                        # 🔍 공시 확인
-                        disclosures = dart.list(ticker, start=target_date)
-                        disc_msg = "\n🔔 최근 공시: 없음"
-                        if disclosures is not None and not disclosures.empty:
-                            disc_msg = f"\n⚠️ 주요 공시: {disclosures.iloc[0]['report_nm']}"
-
+                        # 6번째 칸(거래대금)을 가져와 억 단위로 환산
                         amount_bill = round(df_top.loc[ticker, df_market.columns[5]] / 100_000_000)
-                        msg = f"💎 [포착] {name}\n💰 거래대금: {amount_bill}억\n📈 밀집도: {ma_diff*100:.1f}%{disc_msg}"
+                        msg = f"💎 [포착] {name}\n💰 거래대금: {amount_bill}억\n📈 밀집도: {ma_diff*100:.1f}%\n📉 상태: 거래량 가뭄"
                         send_telegram_msg(msg)
                         found_count += 1
             except: continue 
@@ -75,7 +67,7 @@ def check_market_blind():
         print(f"✅ 분석 완료! 포착 종목: {found_count}개")
         
     except Exception as e:
-        print(f"❌ 최종 에러 발생: {e}")
+        print(f"❌ 에러 발생: {e}")
 
 if __name__ == "__main__":
-    check_market_blind()
+    check_market_no_labels()

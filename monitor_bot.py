@@ -6,7 +6,7 @@ from pykrx import stock
 import OpenDartReader
 from google import genai
 
-# 1. 보안 키 설정 (이미 등록하신 깃허브 Secrets 사용)
+# 1. 보안 키 설정
 DART_KEY = os.environ.get("DART_API_KEY")
 TG_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 AI_KEY = os.environ.get("GEMINI_API_KEY")
@@ -30,48 +30,58 @@ def run_once():
     now = datetime.datetime.now()
     send_tg(f"🦅 [영진 AI 비서] {now.strftime('%H:%M')} 정밀 분석 가동!")
     
-    # --- 1. 거래량 폭등 종목 포착 (에러 수정됨) ---
+    # --- [섹션 1: 거래량 폭등 감시 - 에러 완벽 방어형] ---
     try:
+        # 1. 가장 최근 영업일 데이터 확보
         target_date = now.strftime("%Y%m%d")
-        # [수정] market 옵션 에러 방지를 위해 대문자 'ALL' 대신 'KOSPI'와 'KOSDAQ'을 명시적으로 합칩니다.
-        # 또한 장 시작 전이나 주말에 데이터가 없는 경우를 대비해 안전하게 가져옵니다.
+        # KOSPI 데이터를 먼저 가져와서 확인
         df_today = stock.get_market_ohlcv(target_date, market="KOSPI")
-        if df_today is None or df_today.empty:
-            target_date = (now - datetime.timedelta(days=1)).strftime("%Y%m%d")
+        
+        # 만약 데이터가 없으면(장 전/휴일), 하루씩 뒤로 가며 데이터가 있는 날을 찾습니다.
+        attempt = 0
+        while (df_today is None or df_today.empty or '거래대금' not in df_today.columns) and attempt < 5:
+            now -= datetime.timedelta(days=1)
+            target_date = now.strftime("%Y%m%d")
             df_today = stock.get_market_ohlcv(target_date, market="KOSPI")
-        
-        # 거래대금 상위 30개 종목 추출
-        df_top = df_today.sort_values(by='거래대금', ascending=False).head(30)
-        
-        for ticker, row in df_top.iterrows():
-            name = stock.get_market_ticker_name(ticker)
-            # [수정] KeyError 방지를 위해 컬럼 이름을 직접 확인하거나 인덱스로 접근합니다.
-            curr_vol = row.get('거래량', 0)
-            
-            if curr_vol > 0:
-                # 최근 20일 평균 거래량과 비교
-                df_prev = stock.get_market_ohlcv_by_ticker((now - datetime.timedelta(days=30)).strftime("%Y%m%d"), 
-                                                           (now - datetime.timedelta(days=1)).strftime("%Y%m%d"), ticker)
-                avg_vol = df_prev['거래량'].mean()
-                
-                # 평소보다 5배(500%) 이상 터졌을 때만 알림
-                if curr_vol > avg_vol * 5:
-                    # 관련 공시 확인
-                    dart = OpenDartReader(DART_KEY)
-                    ads = dart.list(ticker, now.strftime("%Y%m%d"))
-                    recent_ad = ads.iloc[0].get('report_nm', '공시 없음') if ads is not None and not ads.empty else "관련 공시 없음"
-                    
-                    vol_ratio = round(curr_vol / avg_vol, 1)
-                    ai_opinion = ask_ai(name, recent_ad, vol_ratio)
-                    
-                    send_tg(f"🔥 [세력 포착] {name}\n📈 거래량: 평소 대비 {vol_ratio}배 폭등!\n📄 최근 공시: {recent_ad}\n🤖 AI 분석: {ai_opinion}")
-    except Exception as e:
-        print(f"세력 분석 에러: {e}")
+            attempt += 1
 
-    # --- 2. 공시 감시 (기존 기능) ---
+        if df_today is not None and not df_today.empty:
+            # 거래대금 상위 30개 종목 (대장주 위주)
+            df_top = df_today.sort_values(by='거래대금', ascending=False).head(30)
+            
+            for ticker, row in df_top.iterrows():
+                name = stock.get_market_ticker_name(ticker)
+                
+                # [핵심] '거래량' 또는 'Volume' 중 존재하는 컬럼을 자동으로 선택합니다.
+                curr_vol = row.get('거래량', row.get('Volume', 0))
+                
+                if curr_vol > 0:
+                    # 최근 20일 평균 거래량 계산
+                    df_prev = stock.get_market_ohlcv_by_ticker((now - datetime.timedelta(days=30)).strftime("%Y%m%d"), 
+                                                               (now - datetime.timedelta(days=1)).strftime("%Y%m%d"), ticker)
+                    # 평균 계산 시에도 컬럼명 자동 선택
+                    prev_vol_col = '거래량' if '거래량' in df_prev.columns else 'Volume'
+                    avg_vol = df_prev[prev_vol_col].mean()
+                    
+                    # 5배(500%) 폭등 조건 확인
+                    if avg_vol > 0 and curr_vol > avg_vol * 5:
+                        # 관련 공시 확인
+                        dart = OpenDartReader(DART_KEY)
+                        ads = dart.list(ticker, target_date)
+                        recent_ad = ads.iloc[0].get('report_nm', '공시 없음') if ads is not None and not ads.empty else "관련 공시 없음"
+                        
+                        vol_ratio = round(curr_vol / avg_vol, 1)
+                        ai_opinion = ask_ai(name, recent_ad, vol_ratio)
+                        
+                        send_tg(f"🔥 [세력 포착] {name}\n📈 거래량: 평소 대비 {vol_ratio}배 폭등!\n📄 최근 공시: {recent_ad}\n🤖 AI 분석: {ai_opinion}")
+    except Exception as e:
+        print(f"세력 분석 에러 상세: {e}") # 깃허브 로그에 에러 원인을 더 자세히 남깁니다.
+
+    # --- [섹션 2: 일반 공시 감시] ---
     try:
         dart = OpenDartReader(DART_KEY)
-        df_dart = dart.list(None, now.strftime('%Y%m%d'))
+        today_str = datetime.datetime.now().strftime('%Y%m%d')
+        df_dart = dart.list(None, today_str)
         keywords = ["공급계약", "수주", "제3자배정", "소각", "무상증자"]
         if df_dart is not None and not df_dart.empty:
             for _, row in df_dart.iterrows():

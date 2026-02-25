@@ -6,3 +6,4 @@ requests
 OpenDartReader
 streamlit-autorefresh
 google-genai
+toml

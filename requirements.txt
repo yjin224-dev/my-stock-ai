@@ -1,5 +1,5 @@
 streamlit
-FinanceDataReader
+finance-datareader
 pykrx
 pandas
 requests

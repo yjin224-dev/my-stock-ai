@@ -1,7 +1,7 @@
-pandas
-numpy
-yfinance
-finance-datareader
-dart-fss
 streamlit
-google-generativeai
+FinanceDataReader
+pykrx
+pandas
+requests
+OpenDartReader
+streamlit-autorefresh

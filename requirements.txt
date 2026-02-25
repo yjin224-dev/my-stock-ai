@@ -5,5 +5,5 @@ pandas
 requests
 OpenDartReader
 streamlit-autorefresh
-google-genai
+google-generativeai
 toml

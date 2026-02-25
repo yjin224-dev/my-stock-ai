@@ -19,3 +19,20 @@
 프로젝트에 필요한 라이브러리를 설치합니다.
 ```bash
 pip install -r requirements.txt
+
+# 데이터 분석 및 조작
+pandas
+numpy
+
+# 주가 데이터 가져오기 (한국 및 해외)
+yfinance
+finance-datareader
+
+# 대한민국 공시 시스템(DART) 연결
+dart-fss
+
+# 웹 대시보드 만들기 (추천)
+streamlit
+
+# AI 분석 (Gemini API 사용 시)
+google-generativeai

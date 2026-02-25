@@ -1,1 +1,24 @@
+name: Stock Monitor Bot
 
+on:
+  schedule:
+    - cron: '*/10 0-7 * * 1-5' # 월~금, 한국 시간 09:00~16:00 사이 10분마다 실행
+  workflow_dispatch: # 직접 실행 버튼 생성
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run Bot
+        env: # 1단계에서 등록한 키를 불러옵니다
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python monitor_bot.py

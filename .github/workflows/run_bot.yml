@@ -2,8 +2,8 @@ name: Stock Monitor Bot
 
 on:
   schedule:
-    - cron: '*/10 0-7 * * 1-5' # 월~금, 한국 시간 09:00~16:50 사이 10분마다 실행
-  workflow_dispatch: # 직접 실행 버튼 생성
+    - cron: '*/10 0-7 * * 1-5'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -17,11 +17,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Run Bot
-        env: # 1단계에서 등록한 키를 불러옵니다
+        env:
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python monitor_bot.py
-
-# 여기에 빈 줄을 추가하여 GitHub Actions 스케줄러를 새로고침합니다.
-

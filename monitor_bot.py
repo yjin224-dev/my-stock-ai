@@ -1,77 +1,52 @@
 import os
-import datetime
 import requests
 import FinanceDataReader as fdr
-from pykrx import stock
-import OpenDartReader
-import google.generativeai as genai # 안정적인 표준 라이브러리로 변경
+import pandas as pd
 
-# 1. 보안 키 설정
-DART_KEY = os.environ.get("DART_API_KEY")
-TG_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-AI_KEY = os.environ.get("GEMINI_API_KEY")
-MY_CHAT_ID = "8403847596" 
+# 1. 설정값 불러오기
+# 토큰은 보안을 위해 환경변수에서 가져오고, 채팅 ID는 고정합니다.
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+CHAT_ID = "8403847596" 
 
-# 2. AI 설정 (Gemini 1.5 Flash - 가장 빠르고 확실함)
-genai.configure(api_key=AI_KEY)
-ai_model = genai.GenerativeModel('gemini-1.5-flash')
-
-def send_tg(text):
+def send_telegram(message):
+    """텔레그램 메시지 전송 함수"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": message}
     try:
-        url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-        requests.post(url, json={'chat_id': MY_CHAT_ID, 'text': text}, timeout=10)
-    except: pass
-
-def ask_ai(prompt_text):
-    try:
-        # AI에게 분석 요청
-        response = ai_model.generate_content(prompt_text)
-        return response.text.strip()
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
     except Exception as e:
-        return f"AI 분석 일시 지연 (사유: {str(e)[:30]})"
+        print(f"메시지 전송 실패: {e}")
 
-def run_once():
-    now = datetime.datetime.now()
-    today = now.strftime('%Y%m%d')
+def detect_power():
+    """세력(거래량) 포착 로직"""
+    # 감시할 주요 종목 (원하시는 종목 코드로 자유롭게 변경하세요)
+    # 005930(삼성전자), 000660(SK하이닉스), 086520(에코프로) 등
+    target_stocks = ['005930', '000660', '086520', '005490', '035420']
     
-    # [연결 확인] AI가 살아있는지 테스트 메시지 발송
-    test_msg = ask_ai("안녕? 넌 이제부터 영진의 주식 비서야. 짧게 인사해줘.")
-    send_tg(f"🤖 [시스템 체크]\n{test_msg}")
-    
-    print(f"🚀 {now.strftime('%H:%M:%S')} - 분석 시작")
-
-    # --- [섹션 1: 공시 감시] ---
-    try:
-        dart = OpenDartReader(DART_KEY)
-        df_dart = dart.list(None, today) 
-        
-        keywords = ["공급계약", "수주", "제3자배정", "소각", "무상증자"]
-        if df_dart is not None and not df_dart.empty:
-            for _, row in df_dart.iterrows():
-                title = row.get('report_nm', row.get('report_name', ''))
-                if any(k in title for k in keywords):
-                    comp = row.get('corp_name', row.get('corp_nm', '종목명 미상'))
-                    # AI 분석 실행
-                    analysis = ask_ai(f"{comp}의 '{title}' 공시가 주가에 호재일까? 1문장 요약해줘.")
-                    send_tg(f"🆕 [신규 호재]\n🏢 종목: {comp}\n📄 공시: {title}\n🤖 AI 분석: {analysis}")
-    except: pass
-
-    # --- [섹션 2: 거래대금 Top 5] ---
-    try:
-        df_vol = stock.get_market_ohlcv(today)
-        if df_vol is None or df_vol.empty:
-            df_vol = stock.get_market_ohlcv((now - datetime.timedelta(days=1)).strftime('%Y%m%d'))
+    for code in target_stocks:
+        try:
+            # 최근 5일치 데이터 조회
+            df = fdr.DataReader(code).tail(5)
+            if len(df) < 2: continue
             
-        if df_vol is not None and not df_vol.empty:
-            df_top = df_vol.sort_values(by='거래대금', ascending=False).head(5)
-            msg = "🔥 [오늘의 거래대금 Top 5]\n"
-            for ticker, row in df_top.iterrows():
-                name = stock.get_market_ticker_name(ticker)
-                msg += f"- {name}\n"
-            send_tg(msg)
-    except: pass
-
-    print(f"✅ 분석 완료")
+            # 현재 거래량과 전일 거래량 비교
+            current_vol = df['Volume'].iloc[-1]
+            prev_vol = df['Volume'].iloc[-2]
+            current_price = df['Close'].iloc[-1]
+            
+            # 포착 기준: 현재 거래량이 전일 전체 거래량의 150%를 돌파했을 때
+            if current_vol > (prev_vol * 1.5):
+                # 종목명 가져오기 (선택 사항)
+                msg = (f"🚨 [영진의 세력 포착]\n"
+                       f"📦 종목코드: {code}\n"
+                       f"💰 현재가: {current_price:,}원\n"
+                       f"📈 현재 거래량: {current_vol:,}\n"
+                       f"⚠️ 전일 대비 약 {int(current_vol/prev_vol*100)}% 폭발 중!")
+                send_telegram(msg)
+                print(f"{code} 포착 완료")
+        except Exception as e:
+            print(f"{code} 분석 중 오류: {e}")
 
 if __name__ == "__main__":
-    run_once()
+    detect_power()

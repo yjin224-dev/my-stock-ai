@@ -3,50 +3,61 @@ import requests
 import FinanceDataReader as fdr
 import pandas as pd
 
-# 1. 설정값 불러오기
-# 토큰은 보안을 위해 환경변수에서 가져오고, 채팅 ID는 고정합니다.
+# 1. 설정값 (사용자님이 주신 정보 고정)
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = "8403847596" 
 
 def send_telegram(message):
-    """텔레그램 메시지 전송 함수"""
+    """텔레그램 메시지 전송"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": message}
+    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
         response = requests.post(url, json=payload)
-        response.raise_for_status()
+        if response.status_code != 200:
+            print(f"전송 실패: {response.text}")
     except Exception as e:
-        print(f"메시지 전송 실패: {e}")
+        print(f"오류 발생: {e}")
 
 def detect_power():
-    """세력(거래량) 포착 로직"""
-    # 감시할 주요 종목 (원하시는 종목 코드로 자유롭게 변경하세요)
-    # 005930(삼성전자), 000660(SK하이닉스), 086520(에코프로) 등
-    target_stocks = ['005930', '000660', '086520', '005490', '035420']
+    # 텔레그램에 보낼 문구 구성
+    # 감시 종목 리스트 (필요한 종목을 계속 추가하세요)
+    target_stocks = {
+        '005930': '삼성전자',
+        '000660': 'SK하이닉스',
+        '086520': '에코프로',
+        '005490': 'POSCO홀딩스',
+        '035420': 'NAVER'
+    }
     
-    for code in target_stocks:
+    for code, name in target_stocks.items():
         try:
-            # 최근 5일치 데이터 조회
-            df = fdr.DataReader(code).tail(5)
+            # 최근 2일 데이터 확인
+            df = fdr.DataReader(code).tail(2)
             if len(df) < 2: continue
             
-            # 현재 거래량과 전일 거래량 비교
-            current_vol = df['Volume'].iloc[-1]
+            curr_vol = df['Volume'].iloc[-1]
             prev_vol = df['Volume'].iloc[-2]
-            current_price = df['Close'].iloc[-1]
+            curr_price = df['Close'].iloc[-1]
             
-            # 포착 기준: 현재 거래량이 전일 전체 거래량의 150%를 돌파했을 때
-            if current_vol > (prev_vol * 1.5):
-                # 종목명 가져오기 (선택 사항)
-                msg = (f"🚨 [영진의 세력 포착]\n"
-                       f"📦 종목코드: {code}\n"
-                       f"💰 현재가: {current_price:,}원\n"
-                       f"📈 현재 거래량: {current_vol:,}\n"
-                       f"⚠️ 전일 대비 약 {int(current_vol/prev_vol*100)}% 폭발 중!")
+            # 세력 포착 기준: 거래량이 어제 전체의 1.3배(130%)를 넘었을 때
+            if curr_vol > (prev_vol * 1.3):
+                ratio = int((curr_vol / prev_vol) * 100)
+                
+                # 텔레그램으로 보낼 멋진 문구
+                msg = (
+                    f"🔥 *[영진의 세력 포착 알림]* 🔥\n"
+                    f"--------------------------\n"
+                    f"📦 *종목명*: {name} ({code})\n"
+                    f"💰 *현재가*: {curr_price:,}원\n"
+                    f"📈 *거래량*: {curr_vol:,}주\n"
+                    f"⚡ *폭발력*: 전일 대비 {ratio}% 돌파!!\n"
+                    f"--------------------------\n"
+                    f"📢 *특이사항*: 대량 매수세 유입 포착!"
+                )
                 send_telegram(msg)
-                print(f"{code} 포착 완료")
+                
         except Exception as e:
-            print(f"{code} 분석 중 오류: {e}")
+            print(f"{name} 분석 중 에러: {e}")
 
 if __name__ == "__main__":
     detect_power()
